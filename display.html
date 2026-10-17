@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>課堂投票｜即時結果</title>
+<style>
+  :root{ --bg:#080d1a; --ink:#e8eefc; --muted:#8fa3bf; --ok:#34d399; --off:#f87171; --bar:#fb923c; }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; overflow:hidden; display:flex; flex-direction:column;
+    background:radial-gradient(1500px 760px at 50% -25%, #7c2d12 0%, var(--bg) 62%);
+    color:var(--ink);
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",system-ui,-apple-system,sans-serif;
+  }
+  header{display:flex; align-items:center; justify-content:space-between; gap:20px; padding:18px 30px; border-bottom:1px solid rgba(148,163,184,.15);}
+  h1{margin:0; font-size:clamp(22px,3.4vw,46px); line-height:1.25;}
+  .side{display:flex; align-items:center; gap:24px;}
+  .stat{text-align:center;}
+  .stat b{display:block; font-size:clamp(22px,2.6vw,38px); color:var(--bar); font-variant-numeric:tabular-nums;}
+  .stat span{font-size:12px; color:var(--muted); letter-spacing:1px;}
+  .pill{display:inline-flex; align-items:center; gap:8px; font-size:15px; padding:7px 16px; border-radius:999px; background:rgba(52,211,153,.16); color:var(--ok); white-space:nowrap;}
+  .pill.closed{background:rgba(248,113,113,.16); color:var(--off);}
+  .dot{width:9px;height:9px;border-radius:50%;background:currentColor;animation:p 1.6s infinite;}
+  @keyframes p{50%{opacity:.3;}}
+  main{flex:1; padding:22px 30px; display:flex; flex-direction:column; gap:16px; justify-content:center; overflow:hidden;}
+  .row{display:flex; flex-direction:column; gap:8px;}
+  .top{display:flex; align-items:baseline; justify-content:space-between; gap:16px;}
+  .name{font-size:clamp(20px,2.5vw,38px); font-weight:800; display:flex; align-items:center; gap:12px;}
+  .badge{flex:0 0 auto; width:clamp(30px,3vw,46px); height:clamp(30px,3vw,46px); border-radius:12px; display:grid; place-items:center;
+         background:rgba(148,163,184,.18); font-size:clamp(15px,1.5vw,22px); font-weight:800; color:var(--muted);}
+  .num{font-size:clamp(20px,2.3vw,36px); font-variant-numeric:tabular-nums; color:var(--muted); white-space:nowrap;}
+  .num b{color:var(--ink); font-size:1.15em;}
+  .bar{height:clamp(20px,2.6vw,40px); border-radius:999px; background:rgba(148,163,184,.15); overflow:hidden;}
+  .bar i{display:block; height:100%; width:0; border-radius:999px;
+         background:linear-gradient(90deg,#fb923c,#facc15); transition:width .6s cubic-bezier(.2,.8,.2,1);}
+  .row.win .name{color:#fde047;}
+  .row.win .badge{background:linear-gradient(180deg,#fde047,#facc15); color:#422006;}
+  .row.win .bar i{background:linear-gradient(90deg,#fde047,#f59e0b);}
+  .empty{color:var(--muted); text-align:center; font-size:clamp(18px,2.4vw,30px); line-height:1.9;}
+  footer{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 30px 18px; color:var(--muted); font-size:14px;}
+  .url{background:rgba(148,163,184,.14); padding:7px 14px; border-radius:10px; color:var(--ink); font-family:ui-monospace,Consolas,monospace;}
+  a{color:var(--bar); text-decoration:none;}
+  button{background:rgba(148,163,184,.14); color:var(--ink); border:1px solid rgba(148,163,184,.3); border-radius:10px; padding:8px 16px; font-size:14px; cursor:pointer;}
+  button:hover{background:rgba(148,163,184,.26);}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="question">載入中…</h1>
+  <div class="side">
+    <div class="stat"><b id="sTotal">0</b><span>總票數</span></div>
+    <div class="stat"><b id="sLead">–</b><span>目前領先</span></div>
+    <div class="pill" id="status"><span class="dot"></span><span id="statusText">連線中…</span></div>
+  </div>
+</header>
+
+<main id="board"><div class="empty">等待老師開始投票…</div></main>
+
+<footer>
+  <div>學生投票網址：<span class="url" id="url">–</span>　<span id="updated"></span></div>
+  <button id="fs">全螢幕</button>
+</footer>
+
+<script type="module">
+import { firebaseConfig, POLL_COLLECTION, POLL_DOC } from "./firebase-config.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
+
+const db = getFirestore(initializeApp(firebaseConfig));
+const ref = doc(db, POLL_COLLECTION, POLL_DOC);
+
+const els = {
+  question: document.getElementById("question"),
+  board: document.getElementById("board"),
+  sTotal: document.getElementById("sTotal"),
+  sLead: document.getElementById("sLead"),
+  status: document.getElementById("status"),
+  statusText: document.getElementById("statusText"),
+  url: document.getElementById("url"),
+  updated: document.getElementById("updated")
+};
+
+const LETTERS = ["A","B","C","D","E","F"];
+els.url.textContent = location.origin + location.pathname.replace(/display\.html$/, "");
+document.getElementById("fs").onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen?.();
+};
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+
+onSnapshot(ref, snap => {
+  if (!snap.exists()){
+    els.question.textContent = "尚未建立投票";
+    els.board.innerHTML = '<div class="empty">請老師在管理頁建立題目</div>';
+    els.sTotal.textContent = "0";
+    els.sLead.textContent = "–";
+    els.status.className = "pill";
+    els.statusText.textContent = "未開始";
+    return;
+  }
+  const p = snap.data();
+  const options = p.options || [];
+  const counts = p.counts || {};
+  const sum = Object.values(counts).reduce((a,b) => a + (b||0), 0);
+  const open = p.open !== false;
+  const max = Math.max(0, ...options.map(o => counts[o.id] || 0));
+
+  els.question.textContent = p.question || "（未命名題目）";
+  els.sTotal.textContent = sum;
+  els.status.className = "pill" + (open ? "" : " closed");
+  els.statusText.textContent = open ? "投票進行中" : "投票已結束";
+  els.updated.textContent = "更新於 " + new Date().toLocaleTimeString("zh-TW", { hour12:false });
+  els.sLead.textContent = (sum > 0 && max > 0)
+    ? options.filter(o => (counts[o.id]||0) === max).map(o => o.text).join("、")
+    : "–";
+
+  els.board.innerHTML = "";
+  options.forEach((o, i) => {
+    const c = counts[o.id] || 0;
+    const pct = sum ? Math.round(c / sum * 100) : 0;
+    const row = document.createElement("div");
+    row.className = "row" + (sum > 0 && c === max && max > 0 ? " win" : "");
+    row.innerHTML = `
+      <div class="top">
+        <div class="name"><span class="badge">${LETTERS[i] || "?"}</span>${esc(o.text)}</div>
+        <div class="num"><b>${c}</b> 票　${pct}%</div>
+      </div>
+      <div class="bar"><i style="width:${pct}%"></i></div>`;
+    els.board.appendChild(row);
+  });
+}, err => {
+  console.error(err);
+  els.status.className = "pill closed";
+  els.statusText.textContent = "連線失敗";
+  els.board.innerHTML = '<div class="empty">連線失敗，請重新整理</div>';
+});
+</script>
+</body>
+</html>

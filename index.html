@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>課堂投票｜請選擇</title>
+<style>
+  :root{
+    --bg:#0b1120; --card:#1e293b; --ink:#e8eefc; --muted:#93a4c0;
+    --a1:#fb923c; --a2:#f97316; --ok:#34d399; --off:#f87171;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0; min-height:100dvh; padding:18px; display:flex; flex-direction:column; gap:16px;
+    background:radial-gradient(1100px 560px at 50% -10%, #9a3412 0%, var(--bg) 60%);
+    color:var(--ink);
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",system-ui,-apple-system,sans-serif;
+  }
+  .wrap{max-width:680px; width:100%; margin:0 auto; display:flex; flex-direction:column; gap:14px; flex:1;}
+  .card{background:rgba(30,41,59,.86); border:1px solid rgba(148,163,184,.18); border-radius:20px; padding:20px;}
+  .pill{display:inline-flex; align-items:center; gap:8px; font-size:14px; padding:6px 14px; border-radius:999px;
+        background:rgba(52,211,153,.16); color:var(--ok); align-self:flex-start;}
+  .pill.closed{background:rgba(248,113,113,.16); color:var(--off);}
+  .dot{width:9px;height:9px;border-radius:50%;background:currentColor;animation:p 1.6s infinite;}
+  @keyframes p{50%{opacity:.3;}}
+  h1{margin:0; font-size:clamp(22px,5.4vw,32px); line-height:1.4;}
+  .hint{color:var(--muted); font-size:15px;}
+  .opts{display:flex; flex-direction:column; gap:12px; margin-top:6px;}
+  .opt{
+    display:flex; align-items:center; gap:14px; width:100%; text-align:left; cursor:pointer;
+    background:#0e1628; color:var(--ink); border:2px solid rgba(148,163,184,.28);
+    border-radius:16px; padding:18px; font-size:22px; font-weight:700;
+    transition:transform .08s ease, border-color .15s ease, background .15s ease;
+  }
+  .opt:active{transform:scale(.985);}
+  .opt:hover:not(:disabled){border-color:var(--a1);}
+  .opt.chosen{border-color:var(--ok); background:rgba(52,211,153,.14);}
+  .opt:disabled{opacity:.72; cursor:default;}
+  .badge{
+    flex:0 0 40px; height:40px; border-radius:12px; display:grid; place-items:center;
+    background:linear-gradient(180deg,#fdba74,#f97316); color:#431407; font-size:19px;
+  }
+  .opt.chosen .badge{background:linear-gradient(180deg,#6ee7b7,#10b981);}
+  .result{display:flex; flex-direction:column; gap:12px;}
+  .row{display:flex; flex-direction:column; gap:6px;}
+  .row .top{display:flex; justify-content:space-between; font-size:16px;}
+  .bar{height:14px; border-radius:999px; background:rgba(148,163,184,.18); overflow:hidden;}
+  .bar i{display:block; height:100%; width:0; border-radius:999px; background:linear-gradient(90deg,#fb923c,#f59e0b); transition:width .5s ease;}
+  .row.mine .top{color:var(--ok); font-weight:700;}
+  .row.mine .bar i{background:linear-gradient(90deg,#34d399,#10b981);}
+  .thanks{text-align:center; display:flex; flex-direction:column; gap:6px; align-items:center;}
+  .thanks .big{font-size:44px;}
+  #toast{
+    position:fixed; left:50%; bottom:24px; transform:translate(-50%,140%);
+    background:var(--ok); color:#052e16; font-weight:700; padding:13px 22px; border-radius:999px;
+    transition:transform .25s ease; z-index:9;
+  }
+  #toast.show{transform:translate(-50%,0);}
+  footer{text-align:center; color:var(--muted); font-size:13px;}
+  a{color:var(--a1);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="status" class="pill"><span class="dot"></span><span id="statusText">連線中…</span></div>
+
+  <section class="card">
+    <h1 id="question">載入中…</h1>
+    <div class="hint" id="hint">請在下方選一個答案</div>
+    <div class="opts" id="opts"></div>
+  </section>
+
+  <section class="card" id="resultCard" style="display:none">
+    <div class="hint" style="margin-bottom:10px">即時結果</div>
+    <div class="result" id="result"></div>
+  </section>
+</div>
+
+<footer>即時同步：Firebase Firestore ｜ <a href="display.html">展示頁</a></footer>
+<div id="toast"></div>
+
+<script type="module">
+import { firebaseConfig, POLL_COLLECTION, POLL_DOC } from "./firebase-config.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+import { getFirestore, doc, onSnapshot, updateDoc, increment, serverTimestamp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
+
+const db = getFirestore(initializeApp(firebaseConfig));
+const ref = doc(db, POLL_COLLECTION, POLL_DOC);
+
+const els = {
+  status: document.getElementById("status"),
+  statusText: document.getElementById("statusText"),
+  question: document.getElementById("question"),
+  hint: document.getElementById("hint"),
+  opts: document.getElementById("opts"),
+  resultCard: document.getElementById("resultCard"),
+  result: document.getElementById("result"),
+  toast: document.getElementById("toast")
+};
+
+const LETTERS = ["A","B","C","D","E","F"];
+let poll = null;
+let myChoice = null;      // 這一場投票我選了什麼
+let voting = false;
+
+function toast(msg, ok = true){
+  els.toast.textContent = msg;
+  els.toast.style.background = ok ? "var(--ok)" : "var(--off)";
+  els.toast.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => els.toast.classList.remove("show"), 1800);
+}
+
+// 同一場投票（round）只記一次選擇，換題目就會重置
+function voteKey(round){ return "vote_round_" + round; }
+
+function total(counts){ return Object.values(counts || {}).reduce((a,b) => a + (b||0), 0); }
+
+function render(){
+  if (!poll){
+    els.question.textContent = "老師還沒開始投票";
+    els.hint.textContent = "請稍候，這頁會自動更新";
+    els.opts.innerHTML = "";
+    els.resultCard.style.display = "none";
+    els.status.className = "pill";
+    els.statusText.textContent = "等待題目…";
+    return;
+  }
+
+  els.question.textContent = poll.question || "（未命名題目）";
+  const options = poll.options || [];
+  const counts = poll.counts || {};
+  const sum = total(counts);
+  const open = poll.open !== false;
+
+  // 狀態列
+  els.status.className = "pill" + (open ? "" : " closed");
+  els.statusText.textContent = open ? "投票進行中" : "投票已結束";
+
+  // 選項按鈕
+  els.opts.innerHTML = "";
+  options.forEach((o, i) => {
+    const b = document.createElement("button");
+    b.className = "opt" + (myChoice === o.id ? " chosen" : "");
+    b.disabled = !!myChoice || !open || voting;
+    b.innerHTML = `<span class="badge">${LETTERS[i] || "?"}</span><span>${escapeHtml(o.text)}</span>`;
+    b.onclick = () => castVote(o);
+    els.opts.appendChild(b);
+  });
+
+  // 提示文字
+  if (!open) els.hint.textContent = "投票已結束，可以看結果";
+  else if (myChoice) els.hint.textContent = "你已經投票了，感謝參與！";
+  else els.hint.textContent = "請在下方選一個答案（只能投一次）";
+
+  // 結果（投過票、或投票已結束、或老師開放即時顯示）
+  const showResult = (myChoice && poll.showLive !== false) || !open;
+  els.resultCard.style.display = showResult ? "" : "none";
+  els.result.innerHTML = "";
+  if (showResult){
+    options.forEach(o => {
+      const c = counts[o.id] || 0;
+      const pct = sum ? Math.round(c / sum * 100) : 0;
+      const row = document.createElement("div");
+      row.className = "row" + (myChoice === o.id ? " mine" : "");
+      row.innerHTML = `
+        <div class="top"><span>${escapeHtml(o.text)}${myChoice === o.id ? " ✔" : ""}</span>
+          <span>${c} 票（${pct}%）</span></div>
+        <div class="bar"><i style="width:${pct}%"></i></div>`;
+      els.result.appendChild(row);
+    });
+    const foot = document.createElement("div");
+    foot.className = "hint";
+    foot.textContent = `共 ${sum} 票`;
+    els.result.appendChild(foot);
+  }
+}
+
+function escapeHtml(s){
+  return String(s ?? "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+}
+
+async function castVote(option){
+  if (voting || myChoice || !poll || poll.open === false) return;
+  voting = true;
+  try{
+    await updateDoc(ref, {
+      ["counts." + option.id]: increment(1),
+      lastVoteAt: serverTimestamp()
+    });
+    myChoice = option.id;
+    try { localStorage.setItem(voteKey(poll.round), option.id); } catch(e){}
+    toast("已投票：" + option.text);
+  }catch(e){
+    console.error(e);
+    toast("投票失敗，請再試一次", false);
+  }finally{
+    voting = false;
+    render();
+  }
+}
+
+onSnapshot(ref, snap => {
+  if (!snap.exists()){
+    poll = null;
+    render();
+    return;
+  }
+  poll = snap.data();
+  // 換新的一場投票（round 變了）就忘掉上一次的選擇
+  try{
+    const saved = localStorage.getItem(voteKey(poll.round));
+    myChoice = saved || null;
+  }catch(e){ myChoice = null; }
+  render();
+}, err => {
+  console.error(err);
+  els.status.className = "pill closed";
+  els.statusText.textContent = "連線失敗";
+  els.question.textContent = "連線失敗，請重新整理";
+});
+</script>
+</body>
+</html>
