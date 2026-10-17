@@ -78,3 +78,15 @@
   `The requested 'read_time' cannot be in the future.` → 改用 `firestore_list_documents`
 - 剛部署完 Firestore 規則的頭幾十秒，瀏覽器可能出現 `permission-denied`；
   因為 snapshot listener 被拒後不會自動重試，**重新整理頁面**即可
+- **用 AI（MCP）改資料時的超大坑**：Firebase MCP 的 `firestore_update_document` 若沒帶 update mask，
+  會**整份文件覆蓋**（不是只改那個欄位）。
+  實際踩過：只為了把 `open` 改成 false，就把題目、選項、票數全部清掉。
+  → 要改單一欄位，請用 `admin.html` 的按鈕，或請 AI 更新時**同時提供所有欄位**。
+
+---
+
+## 發布資訊
+
+- GitHub Pages：https://rick08100824-lab.github.io/class-vote/
+- Repo：https://github.com/rick08100824-lab/class-vote
+- QR code：`C:\Users\n0943\Documents\教學工具QR\投票-學生投票頁.png`
